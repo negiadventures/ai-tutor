@@ -1,10 +1,16 @@
 import hashlib
-import docx
+import logging
 import os
-from app.crud import document_exists_in_db
-from sqlalchemy.orm import Session
 import re
+import tempfile
+
+import docx
+import fitz
+from app.crud import get_document_by_hash
+from sqlalchemy.orm import Session
 from app.vectorize import extract_chapter_contents_from_bytes, extract_chapter_headings_with_page_numbers_from_bytes
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -14,13 +20,36 @@ def hash_content(content):
         content = content.encode("utf-8")
     return hashlib.sha256(content).hexdigest()
 
-def extract_author(file_path: str) -> str:
-    # Example placeholder logic
-    return "Unknown Author"
+def extract_author_from_docx(binary_data: bytes) -> str:
+    """Extract author from DOCX core properties, falling back to 'Unknown Author'."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp.write(binary_data)
+            tmp_path = tmp.name
+        doc = docx.Document(tmp_path)
+        author = doc.core_properties.author
+        return author if author else "Unknown Author"
+    except Exception:
+        return "Unknown Author"
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
-def extract_title(data: str) -> str:
-    """Extracts title from file name without extension."""
-    return "Unknown Title"
+def extract_author_from_pdf(binary_data: bytes) -> str:
+    """Extract author from PDF metadata, falling back to 'Unknown Author'."""
+    try:
+        pdf = fitz.open(stream=binary_data, filetype="pdf")
+        metadata = pdf.metadata
+        return metadata.get("author") or "Unknown Author"
+    except Exception:
+        return "Unknown Author"
+
+def extract_title_from_filename(filename: str) -> str:
+    """Extract a human-readable title from the uploaded filename."""
+    name = os.path.splitext(os.path.basename(filename))[0]
+    return name.replace("_", " ").replace("-", " ").strip() or "Unknown Title"
 
 def save_file(doc_hash, file_ext, content):
     filename = f"{doc_hash}.{file_ext}"
@@ -34,63 +63,65 @@ async def process_file(file, db: Session):
     file_ext = file.filename.split(".")[-1].lower()
 
     if file_ext == "pdf":
-        #TODO: old text = extract_text_from_pdf(content)
-        # chapter_headings = extract_chapter_headings_with_page_numbers_from_bytes(content)
-        pass
-
+        doc_author = extract_author_from_pdf(content)
     elif file_ext == "docx":
-        text = extract_text_from_docx(content)
+        doc_author = extract_author_from_docx(content)
     else:
         raise ValueError("Unsupported file type")
 
-    chapter_headings = extract_chapter_headings_with_page_numbers_from_bytes(content)
-
-    chapters = extract_chapter_contents_from_bytes(content, chapter_headings)
-
-    # chapters = split_into_chapters(text)
-    # chapters = ai_split_into_chapters(text)
-    print(chapters)
-    doc_title = extract_title("")
-    doc_author = extract_author("")
+    doc_title = extract_title_from_filename(file.filename)
     doc_hash = hash_content(content)
-    # Check if doc already exists
-    existing_doc = document_exists_in_db(db, doc_title, doc_author)
+
+    # Use content hash for reliable duplicate detection
+    existing_doc = get_document_by_hash(db, doc_hash)
     if existing_doc:
-        print({"already_exists": True, "document_id": existing_doc.id})
+        logger.info("Document already exists: id=%s", existing_doc.id)
         return {
             "document_id": existing_doc.id,
             "already_exists": True,
             "document_hash": existing_doc.document_hash,
             "title": existing_doc.title,
             "author": existing_doc.author,
+            "file_type": existing_doc.file_type,
             "chapters": existing_doc.chapters,
         }
 
+    chapter_headings = extract_chapter_headings_with_page_numbers_from_bytes(content)
+    chapters = extract_chapter_contents_from_bytes(content, chapter_headings)
+    logger.info("Extracted %d chapters from %s", len(chapters), file.filename)
 
     for ch in chapters:
         ch["hash"] = hash_content(ch["content"])
 
-    # Upload file to S3 (optional)
-    # TODO: upload_to_s3(file.filename, content)
-
-    save_file(doc_hash,file_ext, content)
+    save_file(doc_hash, file_ext, content)
 
     return {
         "already_exists": False,
         "document_hash": doc_hash,
         "title": doc_title,
         "author": doc_author,
+        "file_type": file_ext,
         "chapters": chapters,
     }
-# def extract_text_from_pdf(binary_data):
-#     doc = fitz.open(stream=binary_data, filetype="pdf")
-#     return "\n".join(page.get_text() for page in doc)
 
-def extract_text_from_docx(binary_data):
-    with open("/tmp/tmp.docx", "wb") as f:
-        f.write(binary_data)
-    doc = docx.Document("/tmp/tmp.docx")
-    return "\n".join(p.text for p in doc.paragraphs)
+def extract_text_from_pdf(binary_data: bytes) -> str:
+    """Extract plain text from a PDF file."""
+    pdf = fitz.open(stream=binary_data, filetype="pdf")
+    return "\n".join(page.get_text() for page in pdf)
+
+def extract_text_from_docx(binary_data: bytes) -> str:
+    """Extract plain text from a DOCX file."""
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        tmp.write(binary_data)
+        tmp_path = tmp.name
+    try:
+        doc = docx.Document(tmp_path)
+        return "\n".join(p.text for p in doc.paragraphs)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 def split_into_chapters(text: str):
     # Match section headers like Chapter, Lesson, Unit with numbers or roman numerals

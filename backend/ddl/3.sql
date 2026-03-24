@@ -6,5 +6,6 @@ CREATE TABLE questions (
     question_type VARCHAR(100),
     difficulty VARCHAR(50),
     options JSON,
-    FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+    FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
+    INDEX idx_questions_chapter_id (chapter_id)
 );

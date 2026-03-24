@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-export default function QuizViewer({ quiz, chapterId, chapterNumber, book }) {
-  const [questions, setQuestions] = useState([]);
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+export default function QuizViewer({ quiz, chapterNumber, book }) {
   const [visibleQuestions, setVisibleQuestions] = useState([]);
   const [userAnswers, setUserAnswers] = useState({});
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [score, setScore] = useState(0);
   const [loadingNewQuiz, setLoadingNewQuiz] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (quiz?.questions?.length) {
-      setQuestions(quiz.questions);
       pickRandomFive(quiz.questions);
     }
   }, [quiz]);
@@ -23,6 +25,7 @@ export default function QuizViewer({ quiz, chapterId, chapterNumber, book }) {
     setUserAnswers({});
     setSubmitted(false);
     setScore(0);
+    setError(null);
   };
 
   const handleOptionSelect = (questionIdx, option) => {
@@ -33,6 +36,7 @@ export default function QuizViewer({ quiz, chapterId, chapterNumber, book }) {
   };
 
   const handleSubmit = () => {
+    setSubmitting(true);
     let calculatedScore = 0;
 
     visibleQuestions.forEach((q, idx) => {
@@ -46,23 +50,25 @@ export default function QuizViewer({ quiz, chapterId, chapterNumber, book }) {
 
     setScore(calculatedScore);
     setSubmitted(true);
+    setSubmitting(false);
   };
 
-const regenerateQuiz = async () => {
-  if (!book || chapterNumber == null) return;
-  try {
-    setLoadingNewQuiz(true);
-    const res = await axios.post(
-      `http://localhost:8000/generate-quiz/?book=${encodeURIComponent(book)}&chapter_number=${chapterNumber}`
-    );
-    setQuestions(res.data.questions);
-    pickRandomFive(res.data.questions);
-  } catch (err) {
-    alert('Failed to regenerate quiz');
-  } finally {
-    setLoadingNewQuiz(false);
-  }
-};
+  const regenerateQuiz = async () => {
+    if (!book || chapterNumber == null) return;
+    setError(null);
+    try {
+      setLoadingNewQuiz(true);
+      const res = await axios.post(
+        `${API_BASE}/generate-quiz/?book=${encodeURIComponent(book)}&chapter_number=${chapterNumber}`
+      );
+      pickRandomFive(res.data.questions);
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'Failed to regenerate quiz.';
+      setError(detail);
+    } finally {
+      setLoadingNewQuiz(false);
+    }
+  };
 
   return (
     <div className="mt-8">
@@ -71,11 +77,13 @@ const regenerateQuiz = async () => {
         <button
           onClick={regenerateQuiz}
           disabled={loadingNewQuiz}
-          className="bg-purple-600 text-white px-4 py-1 rounded hover:bg-purple-700"
+          className="bg-purple-600 text-white px-4 py-1 rounded hover:bg-purple-700 disabled:opacity-50"
         >
           {loadingNewQuiz ? 'Loading...' : 'Generate New Quiz'}
         </button>
       </div>
+
+      {error && <p className="mb-4 text-sm text-red-600">⚠️ {error}</p>}
 
       <ul className="space-y-6">
         {visibleQuestions.map((q, idx) => {
@@ -85,7 +93,6 @@ const regenerateQuiz = async () => {
             submitted &&
             userAnswer &&
             userAnswer.trim().toLowerCase() === correctAnswer?.trim().toLowerCase();
-          const isWrong = submitted && (!userAnswer || !isCorrect);
 
           return (
             <li
@@ -150,9 +157,10 @@ const regenerateQuiz = async () => {
       {!submitted ? (
         <button
           onClick={handleSubmit}
-          className="mt-6 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          disabled={submitting}
+          className="mt-6 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
         >
-          Submit
+          {submitting ? 'Submitting...' : 'Submit'}
         </button>
       ) : (
         <div className="mt-6 text-lg font-bold text-purple-700">

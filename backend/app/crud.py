@@ -24,7 +24,7 @@ def save_document_and_chapters(db: Session, doc_data: dict):
         author=doc_data.get("author"),
         file_type=doc_data.get("file_type"),
         document_hash=doc_data["document_hash"],
-        metadata=doc_data.get("metadata", {})
+        meta=doc_data.get("meta", {})
     )
     db.add(doc)
     db.commit()
