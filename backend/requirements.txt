@@ -10,5 +10,8 @@ python-dotenv~=1.1.1
 pydantic~=2.11.7
 pymysql
 pdfplumber
-sentence-transformers
 scikit-learn
+# Testing
+pytest~=8.3.5
+pytest-asyncio~=0.24.0
+httpx~=0.28.1

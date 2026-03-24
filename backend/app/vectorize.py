@@ -1,9 +1,6 @@
 
-from sentence_transformers import SentenceTransformer
 from io import BytesIO
 import fitz
-
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 def extract_chapter_headings_with_page_numbers_from_bytes(file_bytes: bytes):
     doc = fitz.open(stream=BytesIO(file_bytes), filetype="pdf")
